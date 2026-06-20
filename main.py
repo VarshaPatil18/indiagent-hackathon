@@ -37,77 +37,111 @@ settings = Settings()
 
 # ==================== MODELS ====================
 class Language(str, Enum):
-    ENGLISH = "en"; HINDI = "hi"; TELUGU = "te"; TAMIL = "ta"
-    MARATHI = "mr"; GUJARATI = "gu"; BENGALI = "bn"; KANNADA = "kn"
+    ENGLISH = "en"
+    HINDI = "hi"
+    TELUGU = "te"
+    TAMIL = "ta"
+    MARATHI = "mr"
+    GUJARATI = "gu"
+    BENGALI = "bn"
+    KANNADA = "kn"
 
 class BusinessType(str, Enum):
-    KIRANA = "kirana"; PHARMACY = "pharmacy"; SALON = "salon"
-    RESTAURANT = "restaurant"; CLOTHING = "clothing"
-    ELECTRONICS = "electronics"; OTHER = "other"
+    KIRANA = "kirana"
+    PHARMACY = "pharmacy"
+    SALON = "salon"
+    RESTAURANT = "restaurant"
+    CLOTHING = "clothing"
+    ELECTRONICS = "electronics"
+    OTHER = "other"
 
 class HelperType(str, Enum):
-    STOCK = "stock"; MONEY = "money"; ORDERS = "orders"
-    CUSTOMERS = "customers"; PROMOTIONS = "promotions"
+    STOCK = "stock"
+    MONEY = "money"
+    ORDERS = "orders"
+    CUSTOMERS = "customers"
+    PROMOTIONS = "promotions"
 
 class TrustMode(str, Enum):
-    ALWAYS_ASK = "always_ask"; AUTOPILOT = "autopilot"
+    ALWAYS_ASK = "always_ask"
+    AUTOPILOT = "autopilot"
 
 class OnboardingRequest(BaseModel):
     phone: str = Field(..., pattern=r"^\+91\d{10}$")
-    language: Language; business_type: BusinessType
-    current_system: str; selected_helpers: List[HelperType]
+    language: Language
+    business_type: BusinessType
+    current_system: str
+    selected_helpers: List[HelperType]
     trust_mode: TrustMode = TrustMode.ALWAYS_ASK
 
 class ChatMessage(BaseModel):
-    message: str; helper_type: Optional[HelperType] = None
-    language: Language = Language.ENGLISH; session_id: str; is_voice: bool = False
+    message: str
+    helper_type: Optional[HelperType] = None
+    language: Language = Language.ENGLISH
+    session_id: str
+    is_voice: bool = False
 
 class HelperResponse(BaseModel):
-    helper_type: HelperType; message: str; confidence: float
-    action_taken: Optional[str] = None; action_id: Optional[str] = None
-    requires_approval: bool = False; language: Language
+    helper_type: HelperType
+    message: str
+    confidence: float
+    action_taken: Optional[str] = None
+    action_id: Optional[str] = None
+    requires_approval: bool = False
+    language: Language
 
 class ApprovalRequest(BaseModel):
-    action_id: str; approved: bool; session_id: str
+    action_id: str
+    approved: bool
+    session_id: str
 
 # ==================== MEMORY ====================
 class MemoryService:
     def __init__(self):
         self._store: Dict[str, Dict] = {}
         self._lock = asyncio.Lock()
-    
+
     async def get_session(self, session_id: str) -> Dict[str, Any]:
         async with self._lock:
             session = self._store.get(session_id)
             if not session:
                 session = {
-                    "messages": [], "business_data": {}, "watch_list": [],
-                    "trust_mode": "always_ask", "language": "en",
-                    "created_at": datetime.now(), "expires": datetime.now() + timedelta(hours=24)
+                    "messages": [],
+                    "business_data": {},
+                    "watch_list": [],
+                    "trust_mode": "always_ask",
+                    "language": "en",
+                    "created_at": datetime.now(),
+                    "expires": datetime.now() + timedelta(hours=24)
                 }
                 self._store[session_id] = session
             return session
-    
+
     async def add_message(self, session_id: str, role: str, content: str, helper_type: str = None):
         async with self._lock:
             session = await self.get_session(session_id)
-            session["messages"].append({"role": role, "content": content, "helper_type": helper_type, "timestamp": datetime.now().isoformat()})
+            session["messages"].append({
+                "role": role,
+                "content": content,
+                "helper_type": helper_type,
+                "timestamp": datetime.now().isoformat()
+            })
             session["messages"] = session["messages"][-20:]
-    
+
     async def get_context(self, session_id: str, limit: int = 5) -> List[Dict]:
         session = await self.get_session(session_id)
         return session["messages"][-limit:]
-    
+
     async def update_business_data(self, session_id: str, key: str, value: Any):
         async with self._lock:
             session = await self.get_session(session_id)
             session["business_data"][key] = value
-    
+
     async def set_trust_mode(self, session_id: str, mode: str):
         async with self._lock:
             session = await self.get_session(session_id)
             session["trust_mode"] = mode
-    
+
     async def get_trust_mode(self, session_id: str) -> str:
         session = await self.get_session(session_id)
         return session.get("trust_mode", "always_ask")
@@ -119,25 +153,36 @@ class GeminiService:
     def __init__(self):
         self.api_key = settings.GOOGLE_AI_API_KEY
         self.base_url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
-    
+
     async def generate(self, prompt: str, system_instruction: Optional[str] = None, language: str = "en") -> Dict[str, Any]:
         if not self.api_key:
             return self._demo_fallback(prompt, language)
-        
-        lang_map = {"hi": "Respond in Hindi.", "te": "Respond in Telugu.", "ta": "Respond in Tamil.",
-                    "mr": "Respond in Marathi.", "gu": "Respond in Gujarati.", "bn": "Respond in Bengali.",
-                    "kn": "Respond in Kannada.", "en": "Respond in simple English."}
+
+        lang_map = {
+            "hi": "Respond in Hindi.",
+            "te": "Respond in Telugu.",
+            "ta": "Respond in Tamil.",
+            "mr": "Respond in Marathi.",
+            "gu": "Respond in Gujarati.",
+            "bn": "Respond in Bengali.",
+            "kn": "Respond in Kannada.",
+            "en": "Respond in simple English."
+        }
         lang_inst = lang_map.get(language, "Respond in simple English.")
         full_system = (system_instruction or "") + "\n" + lang_inst
-        
+
         payload = {
             "contents": [{"role": "user", "parts": [{"text": full_system + "\n\n" + prompt}]}],
             "generationConfig": {"temperature": 0.7, "maxOutputTokens": 1024, "topP": 0.8, "topK": 40}
         }
-        
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(f"{self.base_url}?key={self.api_key}", headers={"Content-Type": "application/json", "x-goog-api-key": self.api_key}, json=payload)
+                response = await client.post(
+                    f"{self.base_url}?key={self.api_key}",
+                    headers={"Content-Type": "application/json", "x-goog-api-key": self.api_key},
+                    json=payload
+                )
                 if response.status_code == 429:
                     return self._demo_fallback(prompt, language)
                 response.raise_for_status()
@@ -150,26 +195,44 @@ class GeminiService:
         except Exception as e:
             print(f"Gemini error: {e}")
             return self._demo_fallback(prompt, language)
-    
+
     def _estimate_confidence(self, text: str, raw_data: Dict) -> float:
         confidence = 0.85
         for marker in ["not sure", "maybe", "shayad", "pata nahi", "confused"]:
             if marker in text.lower():
-                confidence -= 0.15; break
+                confidence -= 0.15
+                break
         if raw_data.get("candidates", [{}])[0].get("finishReason", "") == "MAX_TOKENS":
             confidence -= 0.2
-        if len(text) < 20: confidence -= 0.3
+        if len(text) < 20:
+            confidence -= 0.3
         return max(0.0, min(1.0, confidence))
-    
+
     def _demo_fallback(self, prompt: str, language: str) -> Dict[str, Any]:
         prompt_lower = prompt.lower()
         responses = {
-            "hi": {"stock": "Aapka stock theek hai. Bas rice thoda kam hai.", "money": "Aaj 3200 rupee aaye hain. 1500 pending hain.", "orders": "Aaj 4 orders aaye hain.", "customers": "Customer ne pucha tha, maine jawab diya.", "promotions": "Weekend offer bhejun?", "default": "Maine samajh liya. Kuch aur bataiye?"},
-            "en": {"stock": "Your stock looks good. Rice is running low.", "money": "3200 received today. 1500 pending.", "orders": "4 orders today. 2 delivered.", "customers": "Customer query answered.", "promotions": "Shall I send weekend offer?", "default": "Got it. What else would you like to know?"}
+            "hi": {
+                "stock": "Aapka stock theek hai. Bas rice thoda kam hai.",
+                "money": "Aaj 3200 rupee aaye hain. 1500 pending hain.",
+                "orders": "Aaj 4 orders aaye hain.",
+                "customers": "Customer ne pucha tha, maine jawab diya.",
+                "promotions": "Weekend offer bhejun?",
+                "default": "Maine samajh liya. Kuch aur bataiye?"
+            },
+            "en": {
+                "stock": "Your stock looks good. Rice is running low.",
+                "money": "3200 received today. 1500 pending.",
+                "orders": "4 orders today. 2 delivered.",
+                "customers": "Customer query answered.",
+                "promotions": "Shall I send weekend offer?",
+                "default": "Got it. What else would you like to know?"
+            }
         }
         helper = "default"
         for h in ["stock", "money", "orders", "customers", "promotions"]:
-            if h in prompt_lower: helper = h; break
+            if h in prompt_lower:
+                helper = h
+                break
         lang = language if language in responses else "en"
         return {"text": responses[lang][helper], "confidence": 0.75, "tokens_used": 0, "demo": True}
 
@@ -182,37 +245,41 @@ class WhatsAppService:
         self.auth_token = settings.TWILIO_AUTH_TOKEN
         self.from_number = settings.TWILIO_WHATSAPP_NUMBER
         self.enabled = bool(self.account_sid and self.auth_token)
-    
+
     async def send_message(self, to: str, message: str) -> Dict[str, Any]:
         if not self.enabled:
             print(f"[DEMO] Would send to {to}: {message[:50]}...")
             return {"status": "demo", "to": to, "message": message}
-        
+
         to_formatted = f"whatsapp:{to}" if not to.startswith("whatsapp:") else to
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(f"https://api.twilio.com/2010-04-01/Accounts/{self.account_sid}/Messages.json",
+                response = await client.post(
+                    f"https://api.twilio.com/2010-04-01/Accounts/{self.account_sid}/Messages.json",
                     auth=httpx.BasicAuth(self.account_sid, self.auth_token),
-                    data={"From": self.from_number, "To": to_formatted, "Body": message})
+                    data={"From": self.from_number, "To": to_formatted, "Body": message}
+                )
                 response.raise_for_status()
                 return {"status": "sent", "sid": response.json().get("sid"), "to": to}
         except Exception as e:
             print(f"Twilio error: {e}")
             return {"status": "error", "error": str(e)}
-    
+
     def is_owner(self, from_number: str) -> bool:
         owner = settings.OWNER_PHONE_NUMBER.replace("whatsapp:", "").replace("+", "").replace(" ", "")
         sender = from_number.replace("whatsapp:", "").replace("+", "").replace(" ", "")
         return owner == sender
-    
+
     def parse_natural_yes_no(self, message: str) -> Optional[bool]:
         msg_lower = message.lower().strip()
         yes = ["yes", "haa", "haan", "ok", "okay", "theek", "theek hai", "sahi", "done", "kar do", "karde", "thumbs up", "sure", "bilkul", "jarur", "zaroor", "ha", "hanji", "haji", "ji", "chal", "chalo"]
         no = ["no", "nahi", "na", "mat karo", "mat kar", "ruk", "ruk ja", "stop", "cancel", "baad mein", "nhi", "nh", "nhn"]
         for p in yes:
-            if p in msg_lower: return True
+            if p in msg_lower:
+                return True
         for p in no:
-            if p in msg_lower: return False
+            if p in msg_lower:
+                return False
         return None
 
 whatsapp = WhatsAppService()
@@ -222,11 +289,17 @@ class DemoData:
     @staticmethod
     def get_dashboard_data():
         return {
-            "mood": "Good", "orders_today": random.randint(3, 8),
-            "money_in": round(random.uniform(2000, 8000), 2), "money_pending": round(random.uniform(500, 3000), 2),
+            "mood": "Good",
+            "orders_today": random.randint(3, 8),
+            "money_in": round(random.uniform(2000, 8000), 2),
+            "money_pending": round(random.uniform(500, 3000), 2),
             "low_stock_items": ["Rice (5 left)", "Wheat flour (2 left)"],
-            "recent_actions": [{"id": "act_001", "helper": "stock", "action": "Flagged rice as low stock", "reason": "Only 5 packets remaining", "time": "10 mins ago", "undoable": True}],
-            "pending_approvals": [{"id": "apr_001", "helper": "orders", "description": "Reorder 20 packets of rice?", "confidence": 0.72}],
+            "recent_actions": [
+                {"id": "act_001", "helper": "stock", "action": "Flagged rice as low stock", "reason": "Only 5 packets remaining", "time": "10 mins ago", "undoable": True}
+            ],
+            "pending_approvals": [
+                {"id": "apr_001", "helper": "orders", "description": "Reorder 20 packets of rice?", "confidence": 0.72}
+            ],
             "active_helpers": ["stock", "money", "orders"]
         }
 
@@ -269,22 +342,28 @@ async def chat_with_helper(helper_type: HelperType, message: ChatMessage):
     session = await memory.get_session(message.session_id)
     context = await memory.get_context(message.session_id)
     context_str = "\n".join([f"{'User' if m['role'] == 'user' else 'Helper'}: {m['content']}" for m in context])
-    
+
     full_prompt = f"Previous:\n{context_str}\n\nCurrent: {message.message}\n\nRespond helpfully."
     system = HELPER_PROMPTS.get(helper_type.value, HELPER_PROMPTS["stock"])
     result = await gemini.generate(prompt=full_prompt, system_instruction=system, language=message.language.value)
-    
+
     await memory.add_message(message.session_id, "user", message.message, helper_type.value)
     await memory.add_message(message.session_id, "assistant", result["text"], helper_type.value)
-    
+
     confidence = result["confidence"]
     trust_mode = await memory.get_trust_mode(message.session_id)
     requires_approval = not (trust_mode == "autopilot" and confidence >= 0.80)
     action_id = f"apr_{uuid.uuid4().hex[:8]}" if requires_approval and confidence > 0.5 else None
-    
-    return HelperResponse(helper_type=helper_type, message=result["text"], confidence=confidence,
-                         action_taken=None if requires_approval else "auto_executed", action_id=action_id,
-                         requires_approval=requires_approval, language=message.language)
+
+    return HelperResponse(
+        helper_type=helper_type,
+        message=result["text"],
+        confidence=confidence,
+        action_taken=None if requires_approval else "auto_executed",
+        action_id=action_id,
+        requires_approval=requires_approval,
+        language=message.language
+    )
 
 @helpers_router.post("/approve")
 async def handle_approval(approval: ApprovalRequest):
@@ -297,19 +376,19 @@ _last_message_time: dict = {}
 async def receive_message(From: str = Form(...), Body: str = Form(""), NumMedia: int = Form(0)):
     from_number = From.replace("whatsapp:", "")
     text = Body.strip()
-    
+
     now = time.time()
     if now - _last_message_time.get(from_number, 0) < 3:
         return {"status": "debounced"}
     _last_message_time[from_number] = now
-    
+
     is_owner = whatsapp.is_owner(from_number)
-    
+
     if is_owner:
         response = await _handle_owner(from_number, text, NumMedia > 0)
     else:
         response = await _handle_customer(from_number, text)
-    
+
     await whatsapp.send_message(from_number, response)
     return {"status": "processed", "is_owner": is_owner}
 
@@ -321,33 +400,46 @@ async def _handle_owner(phone: str, text: str, is_voice: bool) -> str:
     session_id = f"wa_owner_{phone}"
     session = await memory.get_session(session_id)
     language = session.get("language", "en")
-    
-    if is_voice: return "I heard your voice note. Let me check..."
-    
+
+    if is_voice:
+        return "I heard your voice note. Let me check..."
+
     text_lower = text.lower()
     if any(w in text_lower for w in ["watch", "nazar", "bata"]):
         return "I will watch this for you."
-    
+
     yes_no = whatsapp.parse_natural_yes_no(text)
     if yes_no is not None:
         return "Theek hai, maine note kar liya." if yes_no else "Ruk gaya, maine cancel kar diya."
-    
+
     helper = "stock"
-    if any(w in text_lower for w in ["paisa", "payment", "money", "due"]): helper = "money"
-    elif any(w in text_lower for w in ["order", "delivery", "ship"]): helper = "orders"
-    elif any(w in text_lower for w in ["customer", "query", "sawal"]): helper = "customers"
-    elif any(w in text_lower for w in ["offer", "discount", "promo"]): helper = "promotions"
-    
+    if any(w in text_lower for w in ["paisa", "payment", "money", "due"]):
+        helper = "money"
+    elif any(w in text_lower for w in ["order", "delivery", "ship"]):
+        helper = "orders"
+    elif any(w in text_lower for w in ["customer", "query", "sawal"]):
+        helper = "customers"
+    elif any(w in text_lower for w in ["offer", "discount", "promo"]):
+        helper = "promotions"
+
     context = await memory.get_context(session_id)
     context_str = "\n".join([f"{'User' if m['role'] == 'user' else 'Helper'}: {m['content']}" for m in context])
-    result = await gemini.generate(prompt=f"Previous: {context_str}\n\nCurrent: {text}", system_instruction=f"You are the {helper} helper. Respond concisely.", language=language)
-    
+    result = await gemini.generate(
+        prompt=f"Previous: {context_str}\n\nCurrent: {text}",
+        system_instruction=f"You are the {helper} helper. Respond concisely.",
+        language=language
+    )
+
     await memory.add_message(session_id, "user", text, helper)
     await memory.add_message(session_id, "assistant", result["text"], helper)
     return result["text"]
 
 async def _handle_customer(phone: str, text: str) -> str:
-    result = await gemini.generate(prompt=text, system_instruction="You answer on behalf of a small Indian business. If unsure, say 'Let me check with the owner'. NEVER guess.", language="en")
+    result = await gemini.generate(
+        prompt=text,
+        system_instruction="You answer on behalf of a small Indian business. If unsure, say 'Let me check with the owner'. NEVER guess.",
+        language="en"
+    )
     if result["confidence"] < 0.70:
         await whatsapp.send_message(settings.OWNER_PHONE_NUMBER, f"Customer {phone} asked: '{text}'\nI was not confident.")
         return "The owner will check this. Dhanyawad!"
